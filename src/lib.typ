@@ -4,39 +4,215 @@
 ////////////////////////////////
 // # typst-faktura
 ////////////////////////////////
-// used code from:
+// Used code from:
 // https://github.com/Sematre/typst-letter-pro
 // https://github.com/erictapen/typst-invoice
 // https://github.com/Tiefseetauchner/TiefLetter
-// 
 ////////////////////////////////
 
-// Typst can't format numbers yet, so we use this from here:
-// https://github.com/typst/typst/issues/180#issuecomment-1484069775
-#let format-currency(number, locale: "de", append_euro: true) = {
-  let precision = 2
-  assert(precision > 0)
-  let s = str(calc.round(number, digits: precision))
-  let after_dot = s.find(regex("\..*"))
-  if after_dot == none {
-    s = s + "."
-    after_dot = "."
-  }
-  for i in range(precision - after_dot.len() + 1){
-    s = s + "0"
-  }
-  if append_euro {
-    s = s + " €"
-  }
-  // fake de locale
-  if locale == "de" {
-    s.replace(".", ",")
-  } else {
-    s
-  }
+// Constants
+#let currency-precision = 2
+#let default-vat-rate = 19
+#let default-due-duration = 30
+#let default-locale = "de"
+#let default-region = "DE"
+#let default-currency = "EUR"
+#let default-letter-format = "DIN-5008-B"
+
+////////////////////////////////
+// # Locale and Region Configuration
+////////////////////////////////
+
+/// Currency configuration with symbol, placement, and ISO code.
+#let currency-config = (
+  "EUR": (
+    symbol: "€",
+    placement: "suffix", // suffix or prefix
+    iso: "EUR",
+    decimal-sep: (",", "."), // (de, en)
+    thousands-sep: (".", ","), // (de, en)
+  ),
+  "USD": (
+    symbol: "$",
+    placement: "prefix",
+    iso: "USD",
+    decimal-sep: ("", "."),
+    thousands-sep: ("", ","),
+  ),
+  "GBP": (
+    symbol: "£",
+    placement: "prefix",
+    iso: "GBP",
+    decimal-sep: ("", "."),
+    thousands-sep: ("", ","),
+  ),
+  "CHF": (
+    symbol: "CHF",
+    placement: "prefix",
+    iso: "CHF",
+    decimal-sep: (",", "."),
+    thousands-sep: ("'", "'"),
+  ),
+  "JPY": (
+    symbol: "¥",
+    placement: "prefix",
+    iso: "JPY",
+    decimal-sep: ("", "."),
+    thousands-sep: ("", ","),
+    precision: 0, // No decimal places for JPY
+  ),
+)
+
+/// Date format patterns by region.
+#let date-formats = (
+  "US": "[month]/[day]/[year]",
+  "GB": "[day]/[month]/[year]",
+  "DE": "[day].[month].[year]",
+  "AT": "[day].[month].[year]",
+  "CH": "[day].[month].[year]",
+  "FR": "[day]/[month]/[year]",
+  "IT": "[day]/[month]/[year]",
+  "ES": "[day]/[month]/[year]",
+  "NL": "[day]-[month]-[year]",
+  "BE": "[day].[month].[year]",
+  "ISO": "[year]-[month]-[day]",
+)
+
+/// Gets the date format for a given region.
+/// Falls back to ISO format if region not found.
+#let get-date-format(region) = {
+  date-formats.at(region, default: date-formats.at("ISO"))
 }
 
-// This is the content of an https://en.wikipedia.org/wiki/EPC_QR_code version 002
+/// Determines locale-specific formatting rules.
+/// Returns a dict with decimal-sep, thousands-sep, and other formatting rules.
+#let get-locale-formatting(locale, region) = {
+  // Extract base language
+  let lang = locale.split("-").first()
+  
+  // Determine number formatting based on locale and region
+  let decimal-sep = if lang == "de" or region in ("DE", "AT", "CH") {
+    ","
+  } else if lang == "fr" or region in ("FR", "BE") {
+    ","
+  } else {
+    "."
+  }
+  
+  let thousands-sep = if lang == "de" or region in ("DE", "AT") {
+    "."
+  } else if region == "CH" {
+    "'"
+  } else if lang == "fr" or region in ("FR", "BE") {
+    " "
+  } else {
+    ","
+  }
+  
+  (
+    decimal-sep: decimal-sep,
+    thousands-sep: thousands-sep,
+    date-format: get-date-format(region),
+  )
+}
+
+////////////////////////////////
+// # Utility Functions
+////////////////////////////////
+
+/// Formats a number as currency with locale-specific formatting.
+/// 
+/// Typst can't format numbers yet, so we use this workaround:
+/// https://github.com/typst/typst/issues/180#issuecomment-1484069775
+/// 
+/// - number (float): The number to format
+/// - locale (str): Locale for formatting (e.g., "de", "en", "fr")
+/// - region (str): Region code (e.g., "DE", "US", "GB")
+/// - currency (str): Currency code (e.g., "EUR", "USD", "GBP")
+/// - show-symbol (bool): Whether to show the currency symbol
+#let format-currency(
+  number,
+  locale: default-locale,
+  region: default-region,
+  currency: default-currency,
+  show-symbol: true
+) = {
+  assert(currency-precision > 0)
+  
+  // Get currency configuration
+  let curr-config = currency-config.at(currency, default: currency-config.at("EUR"))
+  let precision = curr-config.at("precision", default: currency-precision)
+  
+  // Round to specified precision
+  let rounded = calc.round(number, digits: precision)
+  let number-str = str(rounded)
+  
+  // Find decimal point position
+  let decimal-pos = number-str.find(regex("\..*"))
+  
+  // Ensure decimal point exists (unless precision is 0)
+  if decimal-pos == none and precision > 0 {
+    number-str = number-str + "."
+    decimal-pos = "."
+  }
+  
+  // Pad with zeros to reach precision
+  if precision > 0 {
+    let zeros-needed = precision - decimal-pos.len() + 1
+    for _ in range(zeros-needed) {
+      number-str = number-str + "0"
+    }
+  }
+  
+  // Get locale-specific formatting
+  let formatting = get-locale-formatting(locale, region)
+  
+  // Apply decimal separator
+  if precision > 0 {
+    number-str = number-str.replace(".", formatting.decimal-sep)
+  }
+  
+  // Add thousands separators
+  let parts = number-str.split(formatting.decimal-sep)
+  let integer-part = parts.first()
+  let decimal-part = if parts.len() > 1 { parts.at(1) } else { "" }
+  
+  // Add thousands separators to integer part
+  if formatting.thousands-sep != "" and integer-part.len() > 3 {
+    let reversed = integer-part.reversed()
+    let grouped = reversed
+      .split("")
+      .enumerate()
+      .map(((i, char)) => if i > 0 and i % 3 == 0 { formatting.thousands-sep + char } else { char })
+      .join("")
+    integer-part = grouped.reversed()
+  }
+  
+  // Reconstruct number string
+  number-str = integer-part + (if decimal-part != "" { formatting.decimal-sep + decimal-part } else { "" })
+  
+  // Add currency symbol
+  if show-symbol {
+    let symbol = curr-config.symbol
+    let placement = curr-config.placement
+    if placement == "prefix" {
+      number-str = symbol + (if symbol != "CHF" { " " } else { "" }) + number-str
+    } else {
+      number-str = number-str + " " + symbol
+    }
+  }
+  
+  number-str
+}
+
+/// Generates EPC QR code content for SEPA credit transfers.
+/// 
+/// This follows the EPC QR code specification version 002:
+/// https://en.wikipedia.org/wiki/EPC_QR_code
+/// 
+/// - seller (dict): Seller information with BIC, name, and IBAN
+/// - total (float): Total amount to be paid
+/// - reference (str): Payment reference (typically invoice number)
 #let epc-qr-content(seller, total, reference) = (
   "BCD\n" +
   "002\n" +
@@ -52,7 +228,13 @@
   ""
 )
 
-// Languge dict
+////////////////////////////////
+// # Internationalization
+////////////////////////////////
+
+/// Returns localized strings for the given language.
+/// 
+/// - lang (str): Language code ("en" or "de")
 #let i18n(lang) = if lang == "en" {
   (
     salutation-f: [Dear Ms.],
@@ -137,8 +319,12 @@
   )
 }
 
+////////////////////////////////
+// # Data Structures
+////////////////////////////////
 
-// Global seller dict - can be set globally and used in invoice
+/// Default seller dictionary structure.
+/// Can be set globally and used in invoice generation.
 #let seller = (
   gender: none,
   name: none,
@@ -175,6 +361,8 @@
   signature: false, // currently not used
 )
 
+/// Letter format specifications following DIN 5008 standard.
+/// Defines positions for folding marks and header sizes.
 #let letter-formats = (
   "DIN-5008-A": (
     folding-mark-1-pos: 87mm,
@@ -188,6 +376,14 @@
   ),
 )
 
+////////////////////////////////
+// # Header Functions
+////////////////////////////////
+
+/// Creates a simple header with seller information.
+/// 
+/// - seller (dict): Seller information
+/// - lang (str): Language for VAT ID label
 #let header-simple(seller, lang) = {
   set text(size: 10pt)
   strong(seller.name)
@@ -208,14 +404,24 @@
   }
   if "tel" in seller {seller.tel}
   parbreak()
-  if "vat-id" in seller [#i18n(lang).vat-id #seller.vat-id]
+  if "vat-id" in seller {
+    [#i18n(lang).vat-id #seller.vat-id]
+  }
 }
 
-/// Creates a simple sender box with a name and an address.
+////////////////////////////////
+// # Address Box Functions
+////////////////////////////////
+
+/// Creates a simple sender box with name and address.
 /// 
-/// - name (content, none): Name of the sender
-/// - address (content, none): Address of the sender
-#let sender-box(seller) = rect(width: 85mm, height: 5mm, stroke: none, inset: 0pt, {
+/// - seller (dict): Seller information with name, title, address, etc.
+#let sender-box(seller) = rect(
+  width: 85mm,
+  height: 5mm,
+  stroke: none,
+  inset: 0pt,
+  {
   set text(size: 7pt)
   set align(horizon)
   
@@ -228,9 +434,9 @@
   }))
 })
 
-/// Creates a simple annotations box.
+/// Creates an annotations box for additional notes.
 /// 
-/// - content (content, none): The content
+/// - content (content, none): The content to display
 #let annotations-box(content) = {
   set text(size: 7pt)
   set align(bottom)
@@ -238,7 +444,9 @@
   pad(left: 5mm, bottom: 2mm, content)
 }
 
-// Creates a recipient box.
+/// Creates a recipient address box.
+/// 
+/// - recipient (dict): Recipient information with company, name, address, etc.
 #let recipient-box(recipient) = {
   set text(size: 10pt)
   set align(top)
@@ -253,7 +461,7 @@
   )
 }
 
-/// Creates a simple address box with 2 fields.
+/// Creates an address box with 2 fields (sender and recipient).
 /// 
 /// The width is is determined automatically. Row heights:
 /// #table(
@@ -280,7 +488,8 @@
   )
 }
 
-/// Creates a simple address box with 3 fields and optional repartitioning for a stamp.
+/// Creates an address box with 3 fields (sender, annotations, recipient)
+/// and optional repartitioning for a stamp.
 /// 
 /// The width is is determined automatically. Row heights:
 /// #table(
@@ -344,23 +553,49 @@
 
 
 ////////////////////////////////
-// # main class
+// # Main Invoice/Offer Generator
 ////////////////////////////////
 
-// Generates an invoice
+/// Generates an invoice or offer document.
+/// 
+/// - lang (str): Language code ("en" or "de")
+/// - region (str): Region code (e.g., "DE")
+/// - type (str): Document type ("invoice" or "offer")
+/// - subject (str, none): Document subject/number
+/// - date (datetime): Document date
+/// - due-date (datetime, none): Payment due date
+/// - due-duration (int): Days until payment is due (if due-date is none)
+/// - items (array, none): List of invoice items
+/// - seller (dict): Seller information
+/// - recipient (dict): Recipient information
+/// - vat (float): Default VAT rate percentage
+/// - format (str): Letter format ("DIN-5008-A" or "DIN-5008-B")
+/// - header (content, auto): Custom header content
+/// - footer (content, none): Footer content
+/// - folding-marks (bool): Show folding marks
+/// - hole-mark (bool): Show hole punch mark
+/// - address-box (content, none): Custom address box
+/// - annotations (content, none): Annotations for address box
+/// - stamp (bool): Enable stamp repartitioning
+/// - information-box (content, none): Additional information box
+/// - reference-signs (array, none): Reference signs to display
+/// - page-numbering (str, function, auto, none): Page numbering style
+/// - margins (dict): Page margins
+/// - pre-text (content, none): Text before item table
+/// - post-text (content, none): Text after item table
 #let faktura(
-  lang: "de",
-  region: "DE",
+  lang: default-locale,
+  region: default-region,
   type: "invoice", // or: "offer"
   subject: none,
-  date: datetime.today(offset:auto),
+  date: datetime.today(offset: auto),
   due-date: none,
-  due-duration: 30,
-  items: none, // A list of items
-  seller: seller, // Global seller dict
-  recipient: recipient, // Global recipient dict
-  vat: 19,
-  format: "DIN-5008-B",
+  due-duration: default-due-duration,
+  items: none,
+  seller: seller,
+  recipient: recipient,
+  vat: default-vat-rate,
+  format: default-letter-format,
   header: auto,
   footer: none,
   folding-marks: true,
@@ -381,76 +616,104 @@
   post-text: none,
 ) = {
   ////////////////////////////////
-  //// assertation 
+  //// Validation and Setup
   ////////////////////////////////
+  
+  // Validate letter format
   if not letter-formats.keys().contains(format) {
-    panic("Invalid letter format! Options: " + letter-formats.keys().join(", "))
+    let valid-formats = letter-formats.keys().join(", ")
+    panic("Invalid letter format! Options: " + valid-formats)
   }
+  
+  // Normalize margins with defaults
   margins = (
     left:   margins.at("left",   default: 25mm),
     right:  margins.at("right",  default: 20mm),
     top:    margins.at("top",    default: 20mm),
     bottom: margins.at("bottom", default: 20mm),
   )
-  // Configure page and text properties.
+  
+  // Set document metadata
   if seller.name != none {
     set document(
       title: type + " " + subject,
       author: seller.name
     )
+  } else {
+    set document(title: subject)
   }
-  else {
-    set document(
-      title: subject,
-    )
-  }
+  
+  // Validate language
   assert(
-    lang in ("en", "de"), message: "Currently, only en and de are supported."
+    lang in ("en", "de"),
+    message: "Currently, only 'en' and 'de' are supported."
   )
+  
+  // Validate seller gender
   assert(
     seller.gender in ("f", "F", "m", "M", "o", "O"),
-    message: "seller gender Marker not recognized. Use only [fFmMoO] - Default is 'o'.",
+    message: "Seller gender marker not recognized. Use only [fFmMoO] - Default is 'o'."
   )
+  
+  // Validate recipient gender
   assert(
     recipient.gender in ("f", "F", "m", "M", "o", "O"),
-    message: "recipient gender Marker not recognized. Use only [fFmMoO] - Default is 'o'.",
+    message: "Recipient gender marker not recognized. Use only [fFmMoO] - Default is 'o'."
   )
 
+  // Extract VAT exemption status
   let has-vat-exemption = seller.at("has-vat-exemption", default: false)
-  
-  let has-title = if "title" in seller { true } else { false}
+  let has-title = "title" in seller
 
   ////////////////////////////////
-  //// Letter 
+  //// Page Setup
   ////////////////////////////////
 
   set text(lang: lang, region: region)
   set text(number-type: "old-style")
+  
   set page(
     paper: "a4",
     flipped: false,
     margin: margins,
     background: {
+      // Folding marks for DIN 5008 compliance
       if folding-marks {
-        // folding mark 1
-        place(top + left, dx: 5mm, dy: letter-formats.at(format).folding-mark-1-pos, line(
-            length: 2.5mm,
-            stroke: 0.25pt + black
-        ))
+        let format-spec = letter-formats.at(format)
+        let mark-offset = 5mm
+        let mark-length = 2.5mm
+        let mark-stroke = 0.25pt + black
         
-        // folding mark 2
-        place(top + left, dx: 5mm, dy: letter-formats.at(format).folding-mark-2-pos, line(
-            length: 2.5mm,
-            stroke: 0.25pt + black
-        ))
+        // First folding mark
+        place(
+          top + left,
+          dx: mark-offset,
+          dy: format-spec.folding-mark-1-pos,
+          line(length: mark-length, stroke: mark-stroke)
+        )
+        
+        // Second folding mark
+        place(
+          top + left,
+          dx: mark-offset,
+          dy: format-spec.folding-mark-2-pos,
+          line(length: mark-length, stroke: mark-stroke)
+        )
       }
       
+      // Hole punch mark for filing
       if hole-mark {
-        // hole mark
-        place(left + top, dx: 5mm, dy: 148.5mm, line(
-          length: 4mm,
-          stroke: 0.25pt + black
-        ))
+        let hole-offset-x = 5mm
+        let hole-position-y = 148.5mm
+        let hole-length = 4mm
+        let hole-stroke = 0.25pt + black
+        
+        place(
+          left + top,
+          dx: hole-offset-x,
+          dy: hole-position-y,
+          line(length: hole-length, stroke: hole-stroke)
+        )
       }
     },
     footer-descent: 0%,
@@ -465,8 +728,10 @@
         rows: (0.65em, 1fr),
         row-gutter: 12pt,
         
+        // Page numbering (only show if more than one page)
         if page-count > 1 {
           if page-numbering == auto {
+            // Auto page numbering with language support
             if text.lang == "de" {
               align(right)[Seite #current-page von #page-count]
             } else {
@@ -477,10 +742,11 @@
           } else if type(page-numbering) == function {
             align(right, page-numbering(current-page, page-count))
           } else if page-numbering != none {
-            panic("Unsupported option type!")
+            panic("Unsupported page-numbering option type!")
           }
         },
         
+        // Footer content (only on first page)
         if current-page == 1 {
           footer
         }
@@ -488,194 +754,252 @@
     },
   )
 
-  let address = {
-    seller.street-number + ", " + seller.zip + " " + seller.city
-  }
+  ////////////////////////////////
+  //// Header and Address Box Setup
+  ////////////////////////////////
+  
+  // Generate header if auto
   if header == auto {
     header = pad(
       left:   margins.left,
       right:  margins.right,
       top:    margins.top,
       bottom: 5mm,
-      align( bottom + right, header-simple(seller, lang))
+      align(bottom + right, header-simple(seller, lang))
     )
   }
 
-  let sender-box      = sender-box(seller)
+  // Create address box components
+  let sender-box = sender-box(seller)
   let annotations-box = annotations-box(annotations)
+  let recipient-box = recipient-box(recipient)
 
-  let recipient-box   = recipient-box(recipient)
-
-  let address-box     = address-tribox(sender-box, annotations-box, recipient-box, stamp: stamp)
-  if (annotations == none) and (stamp == false) {
-    address-box = address-duobox(align(bottom, pad(bottom: 0.65em, sender-box)), recipient-box)
+  // Choose address box layout based on annotations and stamp
+  let address-box = if (annotations == none) and (stamp == false) {
+    // Two-box layout (sender + recipient)
+    address-duobox(
+      align(bottom, pad(bottom: 0.65em, sender-box)),
+      recipient-box
+    )
+  } else {
+    // Three-box layout (sender + annotations + recipient)
+    address-tribox(sender-box, annotations-box, recipient-box, stamp: stamp)
   }
 
-  // Reverse the margin for the header, the address box and the information box
-  pad(top: -margins.top, left: -margins.left, right: -margins.right, {
-    grid(
-      columns: 100%,
-      rows: (letter-formats.at(format).header-size, 45mm),
-      
-      // Header box
-      header,
-      
-      // Address / Information box
-      pad(left: 20mm, right: 10mm, {
-        grid(
-          columns: (85mm, 75mm),
-          rows: 45mm,
-          column-gutter: 20mm,
-          
-          // Address box
-          address-box,
-          
-          // Information box
-          pad(top: 5mm, information-box)
-        )
-      }),
-    )
-  })
+  // Place header and address/information boxes
+  // Reverse margins to allow full-width layout
+  pad(
+    top: -margins.top,
+    left: -margins.left,
+    right: -margins.right,
+    {
+      grid(
+        columns: 100%,
+        rows: (letter-formats.at(format).header-size, 45mm),
+        
+        // Header box
+        header,
+        
+        // Address and information box
+        pad(left: 20mm, right: 10mm, {
+          grid(
+            columns: (85mm, 75mm),
+            rows: 45mm,
+            column-gutter: 20mm,
+            
+            // Address box
+            address-box,
+            
+            // Information box
+            pad(top: 5mm, information-box)
+          )
+        }),
+      )
+    }
+  )
 
   v(12pt)
 
-  // Reference signs
+  // Reference signs section
   if (reference-signs != none) and (reference-signs.len() > 0) {
+    // Layout calculation:
+    // Total width: 175mm
+    // Delimiter: 4.23mm
+    // Cell width: 50mm - 4.23mm = 45.77mm
     grid(
-      // Total width: 175mm
-      // Delimiter: 4.23mm
-      // Cell width: 50mm - 4.23mm = 45.77mm
-      
       columns: (45.77mm, 45.77mm, 45.77mm, 25mm),
       rows: 12pt * 2,
       gutter: 12pt,
       
       ..reference-signs.map(sign => {
         let (key, value) = sign
-        
-        text(size: 8pt, key)
-        linebreak()
-        text(size: 10pt, value)
+        [
+          #text(size: 8pt, key)
+          #linebreak()
+          #text(size: 10pt, value)
+        ]
       })
     )
   }
   
 
   ////////////////////////////////
-  //// Pre Text
+  //// Document Header and Salutation
   ////////////////////////////////
 
-  grid(columns: (1fr, 1fr), align: bottom, heading[
-    #if type == "offer" { 
-      [#i18n(lang).offer \##subject]
-    } else {
-      [#i18n(lang).invoice \##subject]
-    }
-  ], [
-    #set align(right)
-    #seller.city, #date.display("[day].[month].[year]")
-  ])
+  // Title and date
+  grid(
+    columns: (1fr, 1fr),
+    align: bottom,
+    heading[
+      #if type == "offer" {
+        [#i18n(lang).offer \##subject]
+      } else {
+        [#i18n(lang).invoice \##subject]
+      }
+    ],
+    [
+      #set align(right)
+      #seller.city, #date.display("[day].[month].[year]")
+    ]
+  )
+  
   line(start: (1cm, 0cm), length: 100% - 2cm, stroke: 0.5pt)
+  
+  // Salutation based on recipient gender
+  let salutation = if recipient.gender in ("f", "F") {
+    i18n(lang).salutation-f
+  } else if recipient.gender in ("m", "M") {
+    i18n(lang).salutation-m
+  } else {
+    i18n(lang).salutation-o
+  }
+  
   [
-    #if recipient.gender == "f" or recipient.gender == "F" {
-      i18n(lang).salutation-f
-    } else if recipient.gender == "m" or recipient.gender == "M" {
-      i18n(lang).salutation-m
+    #salutation
+    #if "short-name" in recipient {
+      recipient.short-name
     } else {
-      i18n(lang).salutation-o
-    }
-    #if "short-name" in recipient [#recipient.short-name] else [#recipient.name],
+      recipient.name
+    },
     #v(0.5em)
     #pre-text
   ]
     
   ////////////////////////////////
-  //// Table of items
+  //// Items Table
   ////////////////////////////////
   
   set table(stroke: none)
 
-  let has-vat-exemption = seller.at("has-vat-exemption", default: false)
+  // Determine default VAT rate (0 if seller has VAT exemption)
   let default-vat-rate = if has-vat-exemption { 0 } else { vat }
 
-  table(
-    columns: if has-vat-exemption {
-      (auto, 1fr, auto, auto, auto)
-    } else {
-      (auto, 1fr, auto, auto, auto, auto, auto)
-    },
-    align: (col, row) => if row == 0 {
-      (right, left, center, center, center, center, center).at(col)
-    } else {
-      (right, left, right, right, right, right, right).at(col)
-    },
-    inset: 6pt,
-    if has-vat-exemption {
-      table.header(
-        table.hline(stroke: 0.5pt),
-        i18n(lang).table-label.item-number,
-        i18n(lang).table-label.description,
-        i18n(lang).table-label.quantity,
-        i18n(lang).table-label.single-price,
-        i18n(lang).table-label.total-price,
-        table.hline(stroke: 0.5pt),
-      )
-    } else {
-      table.header(
-        table.hline(stroke: 0.5pt),
-        i18n(lang).table-label.item-number,
-        i18n(lang).table-label.description,
-        i18n(lang).table-label.quantity,
-        i18n(lang).table-label.single-price,
-        i18n(lang).table-label.vat-rate,
-        i18n(lang).table-label.vat-price,
-        i18n(lang).table-label.total-price,
-        table.hline(stroke: 0.5pt),
-      )
-    },
-    ..items
-      .enumerate()
-      .map(((index, row)) => {
-        let item-vat-rate = row.at("vat-rate", default: default-vat-rate)
+  // Determine table structure based on VAT exemption
+  let table-columns = if has-vat-exemption {
+    (auto, 1fr, auto, auto, auto)  // 5 columns without VAT
+  } else {
+    (auto, 1fr, auto, auto, auto, auto, auto)  // 7 columns with VAT
+  }
+  
+  let table-align = (col, row) => if row == 0 {
+    // Header row: center alignment for numeric columns
+    (right, left, center, center, center, center, center).at(col)
+  } else {
+    // Data rows: right alignment for numeric columns
+    (right, left, right, right, right, right, right).at(col)
+  }
+  
+  // Build table header
+  let table-header = if has-vat-exemption {
+    table.header(
+      table.hline(stroke: 0.5pt),
+      i18n(lang).table-label.item-number,
+      i18n(lang).table-label.description,
+      i18n(lang).table-label.quantity,
+      i18n(lang).table-label.single-price,
+      i18n(lang).table-label.total-price,
+      table.hline(stroke: 0.5pt),
+    )
+  } else {
+    table.header(
+      table.hline(stroke: 0.5pt),
+      i18n(lang).table-label.item-number,
+      i18n(lang).table-label.description,
+      i18n(lang).table-label.quantity,
+      i18n(lang).table-label.single-price,
+      i18n(lang).table-label.vat-rate,
+      i18n(lang).table-label.vat-price,
+      i18n(lang).table-label.total-price,
+      table.hline(stroke: 0.5pt),
+    )
+  }
+  
+  // Process items into table rows
+  let table-rows = items
+    .enumerate()
+    .map(((index, row)) => {
+      let item-vat-rate = row.at("vat-rate", default: default-vat-rate)
+      let item-quantity = row.at("quantity", default: 1)
+      let unit-price = row.unit-price
+      let item-total = (unit-price + (item-vat-rate / 100) * unit-price) * item-quantity
 
-        if has-vat-exemption {
-          (
-            index + 1,
-            row.description,
-            str(row.at("quantity", default: "1")),
-            format-currency(row.unit-price),
-            format-currency((row.unit-price + (item-vat-rate / 100) * row.unit-price) * row.quantity),
-          )
-        } else {
-          (
-            index + 1,
-            row.description,
-            str(row.at("quantity", default: "1")),
-            format-currency(row.unit-price),
-            str(item-vat-rate) + "%",
-            format-currency(row.at("quantity", default: 1) * (item-vat-rate / 100) * row.unit-price),
-            format-currency((row.unit-price + (item-vat-rate / 100) * row.unit-price) * row.quantity),
-          )
-        }
-      })
-      .flatten()
-      .map(str),
+      if has-vat-exemption {
+        // Without VAT columns
+        (
+          index + 1,
+          row.description,
+          str(item-quantity),
+          format-currency(unit-price),
+          format-currency(item-total),
+        )
+      } else {
+        // With VAT columns
+        let vat-amount = item-quantity * (item-vat-rate / 100) * unit-price
+        (
+          index + 1,
+          row.description,
+          str(item-quantity),
+          format-currency(unit-price),
+          str(item-vat-rate) + "%",
+          format-currency(vat-amount),
+          format-currency(item-total),
+        )
+      }
+    })
+    .flatten()
+    .map(str)
+
+  // Render table
+  table(
+    columns: table-columns,
+    align: table-align,
+    inset: 6pt,
+    table-header,
+    ..table-rows,
     table.hline(stroke: 0.5pt),
   )
 
-  let total-no-vat = items.map(row => row.unit-price * row.at("quantity", default: 1)).sum()
-  let total-vat = (
-    items
-      .map(row => (
-        row.unit-price * row.at("quantity", default: 1) * row.at("vat-rate", default: default-vat-rate) / 100
-      ))
-      .sum()
-  )
+  // Calculate totals
+  let total-no-vat = items
+    .map(row => row.unit-price * row.at("quantity", default: 1))
+    .sum()
+  
+  let total-vat = items
+    .map(row => (
+      row.unit-price *
+      row.at("quantity", default: 1) *
+      row.at("vat-rate", default: default-vat-rate) / 100
+    ))
+    .sum()
+  
   let total-with-vat = total-no-vat + total-vat
 
+  // Display totals table
   align(right, table(
     columns: 2,
-    i18n(lang).total-no-vat, format-currency(total-no-vat),
+    i18n(lang).total-no-vat,
+    format-currency(total-no-vat),
     ..if not has-vat-exemption {
       (
         i18n(lang).total-vat,
@@ -688,36 +1012,64 @@
   ))
 
   ////////////////////////////////
-  //// End of table of items
-  ////////////////////////////////  
+  //// Post-Text and Payment Information
+  ////////////////////////////////
 
   [ #post-text ]
 
+  // Calculate payment due date
   let request-date = if due-date == none {
-    date+duration(days: due-duration)
+    date + duration(days: due-duration)
   } else {
     due-date
   }
+  
+  // Payment/offer validity information
   if type == "offer" {
     [#i18n(lang).offer-validity #request-date.display("[day].[month].[year]").]
   } else {
-    [#i18n(lang).payment-request-part1 #format-currency(total-with-vat) #i18n(lang).payment-request-part2 #request-date.display("[day].[month].[year]") #i18n(lang).payment-request-part3 #subject #i18n(lang).payment-request-part4]
-    grid(columns: (1fr, 1fr), gutter: 1em, align: top, [
-      #set par(leading: 0.40em)
-      #set text(number-type: "lining")
-      #i18n(lang).payment.recipient #seller.name \
-      #i18n(lang).payment.bank #seller.bank \
-      #i18n(lang).payment.iban #iban(seller.iban) \
-      #i18n(lang).payment.bic #seller.bic \
-      #i18n(lang).payment.reference #subject
-    ], qrcode(epc-qr-content(seller, total-with-vat, subject), options: (
-                scale: 1.0,
-                bg-color: luma(100%),
-                fg-color: luma(0%),
-              )))
+    // Payment request text
+    [
+      #i18n(lang).payment-request-part1
+      #format-currency(total-with-vat)
+      #i18n(lang).payment-request-part2
+      #request-date.display("[day].[month].[year]")
+      #i18n(lang).payment-request-part3
+      #subject
+      #i18n(lang).payment-request-part4
+    ]
+    
+    // Payment details and QR code
+    grid(
+      columns: (1fr, 1fr),
+      gutter: 1em,
+      align: top,
+      [
+        #set par(leading: 0.40em)
+        #set text(number-type: "lining")
+        #i18n(lang).payment.recipient #seller.name \
+        #i18n(lang).payment.bank #seller.bank \
+        #i18n(lang).payment.iban #iban(seller.iban) \
+        #i18n(lang).payment.bic #seller.bic \
+        #i18n(lang).payment.reference #subject
+      ],
+      qrcode(
+        epc-qr-content(seller, total-with-vat, subject),
+        options: (
+          scale: 1.0,
+          bg-color: luma(100%),
+          fg-color: luma(0%),
+        )
+      )
+    )
   }
 
+  ////////////////////////////////
+  //// Closing and Signature
+  ////////////////////////////////
+
   [
+    // VAT exemption notice
     #if seller.has-vat-exemption [
       #parbreak()
       #seller.at("vat-exemption-text", default: i18n(lang).vat-exemption-text)
@@ -725,8 +1077,10 @@
 
     #v(0.5em)
 
+    // Closing salutation
     #i18n(lang).closing
 
+    // Signature line
     #if "signature" in seller [
       #v(-1em)
       #scale(origin: left, x: 300%, y: 300%, seller.signature)
@@ -737,17 +1091,20 @@
       #line(length: 15em, stroke: 0.5pt)
       #v(-0.4em)
     ]
+    
+    // Seller name and title
     #seller.name
-    #if has-title{[\ #emph(seller.title)]}
+    #if has-title {
+      [\ #emph(seller.title)]
+    }
   ]
 
-  // // ZUGFeRD/Factur-X for invoices
+  // Future: ZUGFeRD/Factur-X support for invoices
   // pdf.attach(
   //   "experiment.csv",
   //   relationship: "supplement",
   //   mime-type: "text/csv",
   //   description: "Raw Oxygen readings from the Arctic experiment",
   // )
-
 }
 

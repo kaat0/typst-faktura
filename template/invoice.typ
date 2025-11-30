@@ -10,7 +10,7 @@
   has-vat-exemption: false,
   email: "alex@mustermail.de",
   bank: "Musterbank",
-  iban: "DE00000000000000000000",
+  iban: "AT022081500000698597",
   bic: "MUSTERBANKXXX",
   tel: "+49 123 456789",
   signature: image("signature.png", width: 5em),
