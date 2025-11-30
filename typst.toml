@@ -1,16 +1,16 @@
 # for a description of available keys, see https://github.com/typst/packages/?tab=readme-ov-file#package-format
 
 [package]
-name = ""
+name = "faktura"
 version = "0.1.0"
 entrypoint = "src/lib.typ"
-authors = []
-license = "Unlicense"
-description = ""
-homepage = ""
-repository = ""
-keywords = []
-categories = []
+authors = ["Martin Scheidt"]
+license = "ISC"
+description = "faktura combines typst-letter-pro, typst-invoice, and TiefLetter into one Typst package for creating business letters, quotes, and invoices in a unified layout. It provides DIN-compliant formatting, reusable components, and minimal configuration—ideal for freelancers, small businesses, and automated document workflows."
+homepage = "https://github.com/kaat0/typst-faktura"
+repository = "https://github.com/kaat0/typst-faktura"
+keywords = ["invoice", "offer", "letter", "din5008"]
+categories = ["office"]
 disciplines = []
 # compiler = ""
 exclude = [
@@ -28,6 +28,3 @@ exclude = [
 # path = "template"
 # entrypoint = "main.typ"
 # thumbnail = "thumbnail.png"
-
-# [tool.mytool]
-# foo = "bar"

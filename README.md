@@ -1,14 +1,12 @@
-# The `my-package` Package
+# The `faktura` Package
 <div align="center">Version 0.1.0</div>
 
-A short description about the project and/or client.
+faktura is a Typst package that combines the functionality of typst-letter-pro, typst-invoice, and TiefLetter. It enables generating business letters, quotes, and invoices with a unified layout, offering DIN-compliant formatting, automation-friendly structures, and minimal configuration—ideal for freelancers, small businesses, and anyone producing recurring business documents.
 
 ## Template adaptation checklist
 
 - [ ] Fill out `README.md`
-  - Change the `my-package` package name, including code snippets
   - Check section contents and/or delete sections that don't apply
-- [ ] Check and/or replace `LICENSE` by something that suits your needs
 - [ ] Fill out `typst.toml`
   - See also the [typst/packages README](https://github.com/typst/packages/?tab=readme-ov-file#package-format)
 - [ ] Adapt Repository URLs in `CHANGELOG.md`
@@ -30,7 +28,7 @@ A short description about the project and/or client.
 These instructions will get you a copy of the project up and running on the typst web app. Perhaps a short code example on importing the package and a very simple teaser usage.
 
 ```typ
-#import "@preview/my-package:0.1.0": *
+#import "@preview/faktura:0.1.0": *
 
 #show: my-show-rule.with()
 #my-func()
@@ -56,7 +54,7 @@ $ Final step
 A more in-depth description of usage. Any template arguments? A complicated example that showcases most if not all of the functions the package provides? This is also an excellent place to signpost the manual.
 
 ```typ
-#import "@preview/my-package:0.1.0": *
+#import "@preview/faktura:0.1.0": *
 
 #let my-complicated-example = ...
 ```
