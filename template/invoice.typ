@@ -1,4 +1,4 @@
-#import "@local/typst-invoice:0.3.1": faktura
+#import "@preview/faktura:0.1.0": faktura
 
 #let seller = (
   gender: "O", // "M" or "F"

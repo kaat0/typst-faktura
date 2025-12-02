@@ -78,6 +78,21 @@
   "ISO": "[year]-[month]-[day]",
 )
 
+/// Letter format specifications following DIN 5008 standard.
+/// Defines positions for folding marks and header sizes.
+#let letter-formats = (
+  "DIN-5008-A": (
+    folding-mark-1-pos: 87mm,
+    folding-mark-2-pos: 87mm + 105mm,
+    header-size: 27mm,
+  ),
+  "DIN-5008-B": (
+    folding-mark-1-pos: 105mm,
+    folding-mark-2-pos: 105mm + 105mm,
+    header-size: 45mm,
+  ),
+)
+
 /// Gets the date format for a given region.
 /// Falls back to ISO format if region not found.
 #let get-date-format(region) = {
@@ -147,45 +162,64 @@
   let rounded = calc.round(number, digits: precision)
   let number-str = str(rounded)
   
-  // Find decimal point position
-  let decimal-pos = number-str.find(regex("\..*"))
+  // Split into integer and decimal parts
+  let parts-initial = number-str.split(".")
+  let integer-part-initial = parts-initial.first()
+  let decimal-part-initial = if parts-initial.len() > 1 { parts-initial.at(1) } else { "" }
   
-  // Ensure decimal point exists (unless precision is 0)
-  if decimal-pos == none and precision > 0 {
-    number-str = number-str + "."
-    decimal-pos = "."
-  }
-  
-  // Pad with zeros to reach precision
+  // Ensure decimal part has correct precision
   if precision > 0 {
-    let zeros-needed = precision - decimal-pos.len() + 1
-    for _ in range(zeros-needed) {
-      number-str = number-str + "0"
+    // Pad decimal part with zeros if needed
+    let decimal-len = decimal-part-initial.len()
+    let zeros-needed = precision - decimal-len
+    if zeros-needed > 0 {
+      for _ in range(zeros-needed) {
+        decimal-part-initial = decimal-part-initial + "0"
+      }
     }
+  } else {
+    decimal-part-initial = ""
   }
   
   // Get locale-specific formatting
   let formatting = get-locale-formatting(locale, region)
   
-  // Apply decimal separator
-  if precision > 0 {
-    number-str = number-str.replace(".", formatting.decimal-sep)
-  }
-  
-  // Add thousands separators
-  let parts = number-str.split(formatting.decimal-sep)
-  let integer-part = parts.first()
-  let decimal-part = if parts.len() > 1 { parts.at(1) } else { "" }
+  // Get integer and decimal parts (before applying thousands separators)
+  let integer-part = integer-part-initial
+  let decimal-part = decimal-part-initial
   
   // Add thousands separators to integer part
   if formatting.thousands-sep != "" and integer-part.len() > 3 {
-    let reversed = integer-part.reversed()
-    let grouped = reversed
-      .split("")
-      .enumerate()
-      .map(((i, char)) => if i > 0 and i % 3 == 0 { formatting.thousands-sep + char } else { char })
-      .join("")
-    integer-part = grouped.reversed()
+    let chars = integer-part.split("")
+    let len = chars.len()
+    // Calculate remainder when dividing by 3
+    // Use integer division by calculating how many full groups of 3 we have
+    let full-groups = calc.floor(len / 3)
+    let remainder = len - (full-groups * 3)
+    // First group size is remainder, or 3 if remainder == 0
+    let first-group-size = if remainder == 0 { 3 } else { remainder }
+    
+    // Build result string directly
+    let result = ""
+    
+    // First group
+    for j in range(first-group-size) {
+      result = result + chars.at(j)
+    }
+    
+    // Remaining groups of 3
+    let pos = first-group-size
+    while pos < len {
+      if result != "" {
+        result = result + formatting.thousands-sep
+      }
+      for j in range(pos, calc.min(pos + 3, len)) {
+        result = result + chars.at(j)
+      }
+      pos = pos + 3
+    }
+    
+    integer-part = result
   }
   
   // Reconstruct number string
@@ -213,110 +247,135 @@
 /// - seller (dict): Seller information with BIC, name, and IBAN
 /// - total (float): Total amount to be paid
 /// - reference (str): Payment reference (typically invoice number)
-#let epc-qr-content(seller, total, reference) = (
-  "BCD\n" +
+/// - currency (str): Currency code (default: "EUR")
+#let epc-qr-content(seller, total, reference, currency: "EUR") = {
+  let curr-config = currency-config.at(currency, default: currency-config.at("EUR"))
+  let amount-formatted = format-currency(total, locale: "en", region: "US", currency: currency, show-symbol: false)
+  let amount-str = amount-formatted
+    .replace(",", "")
+    .replace(".", "")
+    .replace(" ", "")
+    .replace("'", "")
+  
+  ("BCD\n" +
   "002\n" +
   "1\n" +
   "SCT\n" +
   seller.bic + "\n" +
   seller.name + "\n" +
   seller.iban + "\n" +
-  "EUR" + format-currency(total, locale: "en", append_euro: false) + "\n" +
+  curr-config.iso + amount-str + "\n" +
   "\n" +
   reference + "\n" +
   "\n" +
-  ""
-)
+  "")
+}
 
 ////////////////////////////////
 // # Internationalization
 ////////////////////////////////
 
-/// Returns localized strings for the given language.
+/// Returns localized strings for the given language and region.
 /// 
-/// - lang (str): Language code ("en" or "de")
-#let i18n(lang) = if lang == "en" {
-  (
-    salutation-f: [Dear Ms.],
-    salutation-m: [Dear Mr.],
-    salutation-o: [Dear],
-    table-label: (
-      item-number: [*No.*],
-      description: [*Description*],
-      quantity: [*Qty.*],
-      single-price: [*per Pcs.*],
-      vat-rate: [*VAT Rate*],
-      vat-price: [*VAT*],
-      total-price: [*Total*],
-    ),
-    total-no-vat: [Total excl. VAT],
-    total-vat: [VAT],
-    total-with-vat: [Total incl. VAT],
-    vat-id: [VAT-ID:],
-    vat-exemption-text: [Exempt from VAT in accordance with Section §19(1) of the German VAT Act (small business regulation).],
-    invoice: [Invoice],
-    offer: [Offer],
-    // date: [Invoice Date],
-    offer-validity: [The offer is valid until],
-    payment-request-part1: [Please pay the amount of],
-    payment-request-part2: [into our bank account by],
-    payment-request-part3: [at the latest to the following account with reference],
-    payment-request-part4: [.],
-      //{[Please pay the amount of #format-currency(total-with-vat) until #payment-due-date at the latest to the following account with reference #invoice-number:]},
-    payment: (
-      recipient: [Recipient:],
-      iban: [IBAN:],
-      bank: [Bank],
-      bic: [BIC:],
-      amount: [Amount:],
-      reference: [Reference:],
-    ),
-    // delivery-date: if delivery-date == none {
-    //   [The delivery date is, unless otherwise specified, equivalent to the invoice date.]
-    // } else { [The delivery date is, unless otherwise specified, on or in #delivery-date.] },
-    closing: [With kind regards,],
-  )
-} else if lang == "de" {
-  (
-    salutation-f: [Sehr geehrte Frau],
-    salutation-m: [Sehr geehrter Herr],
-    salutation-o: [Guten Tag],
-    table-label: (
-      item-number: [*Pos.*],
-      description: [*Bezeichnung*],
-      quantity: [*Menge*],
-      single-price: [*pro Stk*],
-      vat-rate: [*USt. Satz*],
-      vat-price: [*USt.*],
-      total-price: [*Gesamt*],
-    ),
-    total-no-vat: [Netto:],
-    total-vat: [USt. Gesamt:],
-    total-with-vat: [Brutto:],
-    vat-exemption-text: [Gemäß § 19 Abs. 1 UStG (Kleinunternehmerregelung) wird keine Umsatzsteuer berechnet.],
-    vat-id: [Wirtschafts-ID:],
-    invoice: [Rechnung],
-    offer: [Angebot],
-    // date: [Rechnungsdatum],
-    offer-validity: [Dieses Angebot ist gültig bis],
-    payment-request-part1: [Es wird um Leistung der Zahlung von],
-    payment-request-part2: [bis spätestens],
-    payment-request-part3: [auf das untenstehende Bankkonto unter Angabe der Rechnungsnummer],
-    payment-request-part4: [gebeten.],
-      // [Es wird um Leistung der Zahlung von #format-currency(total-with-vat) bis spätestens #payment-due-date auf unser Bankkonto unter Angabe der Rechnungsnummer '#invoice-number' gebeten.]},
-    payment: (
-      recipient: [Empfänger:],
-      bank: [Kreditinstitut],
-      iban: [IBAN:],
-      bic: [BIC:],
-      amount: [Betrag:],
-      reference: [Verwendungszweck:],
-    ),
-    // delivery-date: if delivery-date == none {
-    //   [Der Lieferzeitpunkt ist, falls nicht anders angegeben, das Rechnungsdatum.]
-    // } else { [Der Lieferzeitpunkt/Lieferzeitraum ist, falls nicht anders angegeben, am/im #delivery-date.] },
-    closing: [Mit freundlichen Grüßen,],
-  )
+/// - lang (str): Language code (e.g., "en", "de", "fr")
+/// - region (str): Region code (e.g., "DE", "US", "GB", "AT", "CH")
+#let i18n(lang, region: none) = {
+  // Extract base language
+  let base-lang = lang.split("-").first()
+  
+  // Get region-specific VAT exemption text
+  let vat-exemption = if region == "DE" {
+    [Gemäß § 19 Abs. 1 UStG (Kleinunternehmerregelung) wird keine Umsatzsteuer berechnet.]
+  } else if region == "AT" {
+    [Gemäß § 6 Abs. 1 Z 27 UStG 1994 (Kleinunternehmerregelung) wird keine Umsatzsteuer berechnet.]
+  } else if region == "CH" {
+    [Gemäß Art. 21 Abs. 1 MWSTG (Kleinunternehmerregelung) wird keine Mehrwertsteuer berechnet.]
+  } else if base-lang == "de" {
+    [Gemäß § 19 Abs. 1 UStG (Kleinunternehmerregelung) wird keine Umsatzsteuer berechnet.]
+  } else if region == "GB" {
+    [Exempt from VAT in accordance with the UK VAT Act (small business exemption).]
+  } else if region == "US" {
+    [Exempt from sales tax in accordance with applicable state regulations (small business exemption).]
+  } else {
+    [Exempt from VAT in accordance with applicable regulations (small business exemption).]
+  }
+  
+  if base-lang == "en" {
+    (
+      salutation-f: [Dear Ms.],
+      salutation-m: [Dear Mr.],
+      salutation-o: [Dear],
+      table-label: (
+        item-number: [*No.*],
+        description: [*Description*],
+        quantity: [*Qty.*],
+        single-price: [*per Pcs.*],
+        vat-rate: [*VAT Rate*],
+        vat-price: [*VAT*],
+        total-price: [*Total*],
+      ),
+      total-no-vat: [Total excl. VAT],
+      total-vat: [VAT],
+      total-with-vat: [Total incl. VAT],
+      vat-id: [VAT-ID:],
+      vat-exemption-text: vat-exemption,
+      invoice: [Invoice],
+      offer: [Offer],
+      offer-validity: [The offer is valid until],
+      payment-request-part1: [Please pay the amount of],
+      payment-request-part2: [into our bank account by],
+      payment-request-part3: [at the latest to the following account with reference],
+      payment-request-part4: [.],
+      payment: (
+        recipient: [Recipient:],
+        iban: [IBAN:],
+        bank: [Bank],
+        bic: [BIC:],
+        amount: [Amount:],
+        reference: [Reference:],
+      ),
+      closing: [With kind regards,],
+    )
+  } else if base-lang == "de" {
+    (
+      salutation-f: [Sehr geehrte Frau],
+      salutation-m: [Sehr geehrter Herr],
+      salutation-o: [Guten Tag],
+      table-label: (
+        item-number: [*Pos.*],
+        description: [*Bezeichnung*],
+        quantity: [*Menge*],
+        single-price: [*pro Stk*],
+        vat-rate: [*USt. Satz*],
+        vat-price: [*USt.*],
+        total-price: [*Gesamt*],
+      ),
+      total-no-vat: [Netto:],
+      total-vat: [USt. Gesamt:],
+      total-with-vat: [Brutto:],
+      vat-exemption-text: vat-exemption,
+      vat-id: [Wirtschafts-ID:],
+      invoice: [Rechnung],
+      offer: [Angebot],
+      offer-validity: [Dieses Angebot ist gültig bis],
+      payment-request-part1: [Es wird um Leistung der Zahlung von],
+      payment-request-part2: [bis spätestens],
+      payment-request-part3: [auf das untenstehende Bankkonto unter Angabe der Rechnungsnummer],
+      payment-request-part4: [gebeten.],
+      payment: (
+        recipient: [Empfänger:],
+        bank: [Kreditinstitut],
+        iban: [IBAN:],
+        bic: [BIC:],
+        amount: [Betrag:],
+        reference: [Verwendungszweck:],
+      ),
+      closing: [Mit freundlichen Grüßen,],
+    )
+  } else {
+    // Fallback to English
+    i18n("en", region: region)
+  }
 }
 
 ////////////////////////////////
@@ -361,21 +420,6 @@
   signature: false, // currently not used
 )
 
-/// Letter format specifications following DIN 5008 standard.
-/// Defines positions for folding marks and header sizes.
-#let letter-formats = (
-  "DIN-5008-A": (
-    folding-mark-1-pos: 87mm,
-    folding-mark-2-pos: 87mm + 105mm,
-    header-size: 27mm,
-  ),
-  "DIN-5008-B": (
-    folding-mark-1-pos: 105mm,
-    folding-mark-2-pos: 105mm + 105mm,
-    header-size: 45mm,
-  ),
-)
-
 ////////////////////////////////
 // # Header Functions
 ////////////////////////////////
@@ -384,7 +428,8 @@
 /// 
 /// - seller (dict): Seller information
 /// - lang (str): Language for VAT ID label
-#let header-simple(seller, lang) = {
+/// - region (str): Region code
+#let header-simple(seller, lang, region) = {
   set text(size: 10pt)
   strong(seller.name)
   linebreak()
@@ -405,7 +450,7 @@
   if "tel" in seller {seller.tel}
   parbreak()
   if "vat-id" in seller {
-    [#i18n(lang).vat-id #seller.vat-id]
+    [#i18n(lang, region: region).vat-id #seller.vat-id]
   }
 }
 
@@ -558,8 +603,9 @@
 
 /// Generates an invoice or offer document.
 /// 
-/// - lang (str): Language code ("en" or "de")
-/// - region (str): Region code (e.g., "DE")
+/// - lang (str): Language code (e.g., "en", "de", "fr")
+/// - region (str): Region code (e.g., "DE", "US", "GB", "AT", "CH")
+/// - currency (str): Currency code (e.g., "EUR", "USD", "GBP", "CHF")
 /// - type (str): Document type ("invoice" or "offer")
 /// - subject (str, none): Document subject/number
 /// - date (datetime): Document date
@@ -586,6 +632,7 @@
 #let faktura(
   lang: default-locale,
   region: default-region,
+  currency: default-currency,
   type: "invoice", // or: "offer"
   subject: none,
   date: datetime.today(offset: auto),
@@ -643,11 +690,14 @@
     set document(title: subject)
   }
   
-  // Validate language
-  assert(
-    lang in ("en", "de"),
-    message: "Currently, only 'en' and 'de' are supported."
-  )
+  // Extract base language for validation
+  let base-lang = lang.split("-").first()
+  
+  // Get locale-specific formatting
+  let formatting = get-locale-formatting(lang, region)
+  
+  // Get translations
+  let translations = i18n(lang, region: region)
   
   // Validate seller gender
   assert(
@@ -765,7 +815,7 @@
       right:  margins.right,
       top:    margins.top,
       bottom: 5mm,
-      align(bottom + right, header-simple(seller, lang))
+      align(bottom + right, header-simple(seller, lang, region))
     )
   }
 
@@ -842,7 +892,6 @@
     )
   }
   
-
   ////////////////////////////////
   //// Document Header and Salutation
   ////////////////////////////////
@@ -853,14 +902,14 @@
     align: bottom,
     heading[
       #if type == "offer" {
-        [#i18n(lang).offer \##subject]
+        [#translations.offer \##subject]
       } else {
-        [#i18n(lang).invoice \##subject]
+        [#translations.invoice \##subject]
       }
     ],
     [
       #set align(right)
-      #seller.city, #date.display("[day].[month].[year]")
+      #seller.city, #date.display(formatting.date-format)
     ]
   )
   
@@ -868,11 +917,11 @@
   
   // Salutation based on recipient gender
   let salutation = if recipient.gender in ("f", "F") {
-    i18n(lang).salutation-f
+    translations.salutation-f
   } else if recipient.gender in ("m", "M") {
-    i18n(lang).salutation-m
+    translations.salutation-m
   } else {
-    i18n(lang).salutation-o
+    translations.salutation-o
   }
   
   [
@@ -914,23 +963,23 @@
   let table-header = if has-vat-exemption {
     table.header(
       table.hline(stroke: 0.5pt),
-      i18n(lang).table-label.item-number,
-      i18n(lang).table-label.description,
-      i18n(lang).table-label.quantity,
-      i18n(lang).table-label.single-price,
-      i18n(lang).table-label.total-price,
+      translations.table-label.item-number,
+      translations.table-label.description,
+      translations.table-label.quantity,
+      translations.table-label.single-price,
+      translations.table-label.total-price,
       table.hline(stroke: 0.5pt),
     )
   } else {
     table.header(
       table.hline(stroke: 0.5pt),
-      i18n(lang).table-label.item-number,
-      i18n(lang).table-label.description,
-      i18n(lang).table-label.quantity,
-      i18n(lang).table-label.single-price,
-      i18n(lang).table-label.vat-rate,
-      i18n(lang).table-label.vat-price,
-      i18n(lang).table-label.total-price,
+      translations.table-label.item-number,
+      translations.table-label.description,
+      translations.table-label.quantity,
+      translations.table-label.single-price,
+      translations.table-label.vat-rate,
+      translations.table-label.vat-price,
+      translations.table-label.total-price,
       table.hline(stroke: 0.5pt),
     )
   }
@@ -950,8 +999,8 @@
           index + 1,
           row.description,
           str(item-quantity),
-          format-currency(unit-price),
-          format-currency(item-total),
+          format-currency(unit-price, locale: lang, region: region, currency: currency),
+          format-currency(item-total, locale: lang, region: region, currency: currency),
         )
       } else {
         // With VAT columns
@@ -960,10 +1009,10 @@
           index + 1,
           row.description,
           str(item-quantity),
-          format-currency(unit-price),
+          format-currency(unit-price, locale: lang, region: region, currency: currency),
           str(item-vat-rate) + "%",
-          format-currency(vat-amount),
-          format-currency(item-total),
+          format-currency(vat-amount, locale: lang, region: region, currency: currency),
+          format-currency(item-total, locale: lang, region: region, currency: currency),
         )
       }
     })
@@ -998,15 +1047,15 @@
   // Display totals table
   align(right, table(
     columns: 2,
-    i18n(lang).total-no-vat,
-    format-currency(total-no-vat),
+    translations.total-no-vat,
+    format-currency(total-no-vat, locale: lang, region: region, currency: currency),
     ..if not has-vat-exemption {
       (
-        i18n(lang).total-vat,
-        format-currency(total-vat),
+        translations.total-vat,
+        format-currency(total-vat, locale: lang, region: region, currency: currency),
         table.hline(stroke: 0.5pt),
-        i18n(lang).total-with-vat,
-        format-currency(total-with-vat),
+        translations.total-with-vat,
+        format-currency(total-with-vat, locale: lang, region: region, currency: currency),
       )
     },
   ))
@@ -1026,17 +1075,17 @@
   
   // Payment/offer validity information
   if type == "offer" {
-    [#i18n(lang).offer-validity #request-date.display("[day].[month].[year]").]
+    [#translations.offer-validity #request-date.display(formatting.date-format).]
   } else {
     // Payment request text
     [
-      #i18n(lang).payment-request-part1
-      #format-currency(total-with-vat)
-      #i18n(lang).payment-request-part2
-      #request-date.display("[day].[month].[year]")
-      #i18n(lang).payment-request-part3
+      #translations.payment-request-part1
+      #format-currency(total-with-vat, locale: lang, region: region, currency: currency)
+      #translations.payment-request-part2
+      #request-date.display(formatting.date-format)
+      #translations.payment-request-part3
       #subject
-      #i18n(lang).payment-request-part4
+      #translations.payment-request-part4
     ]
     
     // Payment details and QR code
@@ -1047,14 +1096,14 @@
       [
         #set par(leading: 0.40em)
         #set text(number-type: "lining")
-        #i18n(lang).payment.recipient #seller.name \
-        #i18n(lang).payment.bank #seller.bank \
-        #i18n(lang).payment.iban #iban(seller.iban) \
-        #i18n(lang).payment.bic #seller.bic \
-        #i18n(lang).payment.reference #subject
+        #translations.payment.recipient #seller.name \
+        #translations.payment.bank #seller.bank \
+        #translations.payment.iban #iban(seller.iban) \
+        #translations.payment.bic #seller.bic \
+        #translations.payment.reference #subject
       ],
       qrcode(
-        epc-qr-content(seller, total-with-vat, subject),
+        epc-qr-content(seller, total-with-vat, subject, currency: currency),
         options: (
           scale: 1.0,
           bg-color: luma(100%),
@@ -1072,13 +1121,13 @@
     // VAT exemption notice
     #if seller.has-vat-exemption [
       #parbreak()
-      #seller.at("vat-exemption-text", default: i18n(lang).vat-exemption-text)
+      #seller.at("vat-exemption-text", default: translations.vat-exemption-text)
     ]
 
     #v(0.5em)
 
     // Closing salutation
-    #i18n(lang).closing
+    #translations.closing
 
     // Signature line
     #if "signature" in seller [
@@ -1107,4 +1156,5 @@
   //   description: "Raw Oxygen readings from the Arctic experiment",
   // )
 }
+
 

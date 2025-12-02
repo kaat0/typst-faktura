@@ -24,7 +24,7 @@ exclude = [
   "thumbnail-light.svg",
 ]
 
-# [template]
-# path = "template"
-# entrypoint = "main.typ"
+[template]
+path = "template"
+entrypoint = "invoice.typ"
 # thumbnail = "thumbnail.png"

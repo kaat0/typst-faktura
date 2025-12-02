@@ -1,4 +1,4 @@
-#import "@local/faktura:0.1.0": faktura
+#import "@preview/faktura:0.1.0": faktura
 
 #let seller = (
   gender: "O", // "M" or "F"
@@ -34,7 +34,8 @@
   ),
   // Items
   items: (
-    (quantity: 10, description: "Beispielposition", unit-price: 100.0),
+    (quantity: 10, description: "Beispielposition 1", unit-price: 100.0),
+    (quantity:  1, description: "Beispielposition 2", unit-price: 10000.0, vat-rate: 7),
   ),
   pre-text: [
     anbei finden Sie unser Angebot für die gewünschte Dienstleistung.
@@ -42,7 +43,6 @@
     - *Umfang:* Details zum Leistungsumfang und ggf. zur Vorgehensweise.
   ],
   post-text: [
-    Das Angebot ist bis zum 31.12.2026 gültig.
     Für Rückfragen stehen wir Ihnen gerne zur Verfügung.
   ],
 )
