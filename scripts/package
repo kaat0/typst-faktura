@@ -1,12 +1,14 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 set -eu
 
 # adapted from https://github.com/johannes-wolf/cetz/blob/35c0868378cea5ad323cc0d9c2f76de8ed9ba5bd/scripts/package
 # licensed under Apache License 2.0
 
-. "$(dirname "${BASH_SOURCE[0]}")/setup"
+# Get script directory (POSIX-compatible)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+. "$SCRIPT_DIR/setup"
 
-if (( $# < 1 )) || [[ "${1:-}" == "help" ]]; then
+if [ $# -lt 1 ] || [ "${1:-}" = "help" ]; then
   echo "package TARGET"
   echo ""
   echo "Packages all relevant files into a directory named '<name>/<version>'"
@@ -14,65 +16,77 @@ if (( $# < 1 )) || [[ "${1:-}" == "help" ]]; then
   echo "directory will be used so that the package gets installed for local use."
   echo "The name and version are read from 'typst.toml' in the project root."
   echo ""
-  echo "Local package prefix: $DATA_DIR/typst/package/local"
-  echo "Local preview package prefix: $DATA_DIR/typst/package/preview"
+  echo "Local package prefix: $DATA_DIR/typst/packages/local"
+  echo "Local preview package prefix: $DATA_DIR/typst/packages/preview"
   exit 1
 fi
 
-TARGET="$(resolve-target "${1:?Missing target path, @local or @preview}")"
+TARGET="$(resolve_target "${1:?Missing target path, @local or @preview}")"
+# Ensure TARGET is an absolute path
+case "$TARGET" in
+  /*)
+    # Already absolute
+    ;;
+  *)
+    # Make it absolute relative to current directory
+    TARGET="$(cd "$(dirname "$TARGET")" 2>/dev/null && pwd -P)/$(basename "$TARGET")" 2>/dev/null || echo "$(pwd -P)/$TARGET"
+    ;;
+esac
 echo "Install dir: $TARGET"
 
-# ignore rules
-readarray -t ignores < <(grep -v '^#' .typstignore | grep '[^[:blank:]]')
+# ignore rules - read into a temporary file and process line by line
+IGNORES_TMP="$(mktemp)"
+grep -v '^#' .typstignore | grep '[^[:blank:]]' > "$IGNORES_TMP" || true
 
 # recursively print all files that are not excluded via .typstignore
-function enumerate {
-  local root="$1"
-  if [[ -f "$root" ]]; then
+enumerate() {
+  root="$1"
+  if [ -f "$root" ]; then
     echo "$root"
   else
-    local files
-    readarray -t files < <(find "$root" \
+    find "$root" \
       -mindepth 1 -maxdepth 1 \
       -not -name .git \
-      -not -name .typstignore)
-    # declare -p files >&2
-
-    local f
-    for f in "${files[@]}"; do
-      local include
+      -not -name .typstignore | while read -r f; do
       include=1
 
-      local ignore
-      for ignore in "${ignores[@]}"; do
-        if [[ "$ignore" =~ ^! ]]; then
-          ignore="${ignore:1}"
-          if [[ "$f" == ./$ignore ]]; then
-            # echo "\"$f\" matched \"!$ignore\"" >&2
-            include=1
-          fi
-        elif [[ "$f" == ./$ignore ]]; then
-          # echo "\"$f\" matched \"$ignore\"" >&2
-          include=0
-        fi
-      done
-      if [[ "$include" == 1 ]]; then
+      # Check against ignore patterns
+      while IFS= read -r ignore || [ -n "$ignore" ]; do
+        case "$ignore" in
+          !*)
+            # Negation pattern
+            ignore_pattern="${ignore#!}"
+            if [ "$f" = "./$ignore_pattern" ]; then
+              include=1
+            fi
+            ;;
+          *)
+            if [ "$f" = "./$ignore" ]; then
+              include=0
+            fi
+            ;;
+        esac
+      done < "$IGNORES_TMP"
+
+      if [ "$include" = 1 ]; then
         enumerate "$f"
       fi
     done
   fi
 }
 
-# List of all files that get packaged
-readarray -t files < <(enumerate ".")
-# declare -p files >&2
+# List of all files that get packaged - read into a temporary file
+FILES_TMP="$(mktemp)"
+enumerate "." > "$FILES_TMP"
 
 TMP="$(mktemp -d)"
 
-for f in "${files[@]}"; do
-  mkdir -p "$TMP/$(dirname "$f")" 2>/dev/null
-  cp -r "$ROOT/$f" "$TMP/$f"
-done
+while IFS= read -r f || [ -n "$f" ]; do
+  if [ -n "$f" ]; then
+    mkdir -p "$TMP/$(dirname "$f")" 2>/dev/null || true
+    cp -r "$ROOT/$f" "$TMP/$f"
+  fi
+done < "$FILES_TMP"
 
 TARGET="${TARGET:?}/${PKG_PREFIX:?}/${VERSION:?}"
 echo "Packaged to: $TARGET"
@@ -81,6 +95,8 @@ if rm -r "${TARGET:?}" 2>/dev/null; then
 fi
 mkdir -p "$TARGET"
 
-# include hidden files by setting dotglob
-shopt -s dotglob
-mv "$TMP"/* "$TARGET"
+# Move all files including hidden ones
+find "$TMP" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET" \;
+
+# Cleanup temporary files
+rm -f "$IGNORES_TMP" "$FILES_TMP"
