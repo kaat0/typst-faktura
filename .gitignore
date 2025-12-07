@@ -77,8 +77,10 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,linux,windows
 
+### typst ###
+
 # Ignore generated template files
-template/*.pdf
+template/**.pdf
 
 # Ignore generated test files
 # Tytanic test artifacts and output
