@@ -8,20 +8,50 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$SCRIPT_DIR/setup"
 
-if [ $# -lt 1 ] || [ "${1:-}" = "help" ]; then
-  echo "package TARGET"
-  echo ""
-  echo "Packages all relevant files into a directory named '<name>/<version>'"
-  echo "at TARGET. If TARGET is set to @local or @preview, the local Typst package"
-  echo "directory will be used so that the package gets installed for local use."
-  echo "The name and version are read from 'typst.toml' in the project root."
-  echo ""
-  echo "Local package prefix: $DATA_DIR/typst/packages/local"
-  echo "Local preview package prefix: $DATA_DIR/typst/packages/preview"
+SYMLINK=0
+TARGET_ARG=""
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --symlink|-s)
+      SYMLINK=1
+      shift
+      ;;
+    --help|-h|help)
+      echo "package [OPTIONS] TARGET"
+      echo ""
+      echo "Packages all relevant files into a directory named '<name>/<version>'"
+      echo "at TARGET. If TARGET is set to @local or @preview, the local Typst package"
+      echo "directory will be used so that the package gets installed for local use."
+      echo "The name and version are read from 'typst.toml' in the project root."
+      echo ""
+      echo "Options:"
+      echo "  -s, --symlink    Create a symlink instead of copying files"
+      echo ""
+      echo "Local package prefix: $DATA_DIR/typst/packages/local"
+      echo "Local preview package prefix: $DATA_DIR/typst/packages/preview"
+      exit 1
+      ;;
+    *)
+      if [ -z "$TARGET_ARG" ]; then
+        TARGET_ARG="$1"
+      else
+        echo "Error: Multiple targets specified" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$TARGET_ARG" ]; then
+  echo "Error: Missing target path, @local or @preview" >&2
+  echo "Run 'package help' for usage information" >&2
   exit 1
 fi
 
-TARGET="$(resolve_target "${1:?Missing target path, @local or @preview}")"
+TARGET="$(resolve_target "$TARGET_ARG")"
 # Ensure TARGET is an absolute path
 case "$TARGET" in
   /*)
@@ -75,28 +105,45 @@ enumerate() {
   fi
 }
 
-# List of all files that get packaged - read into a temporary file
-FILES_TMP="$(mktemp)"
-enumerate "." > "$FILES_TMP"
-
-TMP="$(mktemp -d)"
-
-while IFS= read -r f || [ -n "$f" ]; do
-  if [ -n "$f" ]; then
-    mkdir -p "$TMP/$(dirname "$f")" 2>/dev/null || true
-    cp -r "$ROOT/$f" "$TMP/$f"
-  fi
-done < "$FILES_TMP"
-
 TARGET="${TARGET:?}/${PKG_PREFIX:?}/${VERSION:?}"
 echo "Packaged to: $TARGET"
-if rm -r "${TARGET:?}" 2>/dev/null; then
-  echo "Overwriting existing version."
+
+if [ "$SYMLINK" -eq 1 ]; then
+  # Symlink mode: create a symlink to the project root
+  if [ -e "$TARGET" ] || [ -L "$TARGET" ]; then
+    rm -r "$TARGET" 2>/dev/null && echo "Overwriting existing version."
+  fi
+  mkdir -p "$(dirname "$TARGET")"
+  
+  # Use absolute path for symlink (more reliable across systems)
+  ln -s "$ROOT" "$TARGET"
+  echo "Created symlink: $TARGET -> $ROOT"
+  
+  # Cleanup temporary files
+  rm -f "$IGNORES_TMP"
+else
+  # Copy mode: package files as before
+  # List of all files that get packaged - read into a temporary file
+  FILES_TMP="$(mktemp)"
+  enumerate "." > "$FILES_TMP"
+
+  TMP="$(mktemp -d)"
+
+  while IFS= read -r f || [ -n "$f" ]; do
+    if [ -n "$f" ]; then
+      mkdir -p "$TMP/$(dirname "$f")" 2>/dev/null || true
+      cp -r "$ROOT/$f" "$TMP/$f"
+    fi
+  done < "$FILES_TMP"
+
+  if rm -r "${TARGET:?}" 2>/dev/null; then
+    echo "Overwriting existing version."
+  fi
+  mkdir -p "$TARGET"
+
+  # Move all files including hidden ones
+  find "$TMP" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET" \;
+
+  # Cleanup temporary files
+  rm -f "$IGNORES_TMP" "$FILES_TMP"
 fi
-mkdir -p "$TARGET"
-
-# Move all files including hidden ones
-find "$TMP" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET" \;
-
-# Cleanup temporary files
-rm -f "$IGNORES_TMP" "$FILES_TMP"
