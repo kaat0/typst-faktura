@@ -4,30 +4,123 @@ set -eu
 # adapted from https://github.com/johannes-wolf/cetz/blob/35c0868378cea5ad323cc0d9c2f76de8ed9ba5bd/scripts/package
 # licensed under Apache License 2.0
 
-. "$(dirname "${BASH_SOURCE[0]}")/setup"
+# Get script directory (POSIX-compatible)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+. "$SCRIPT_DIR/setup"
 
-if (( $# < 1 )) || [[ "${1:-}" == "help" ]]; then
-  echo "uninstall TARGET"
-  echo ""
-  echo "Removes the package installed into a directory named '<name>/<version>'"
-  echo "at TARGET. If TARGET is set to @local or @preview, the local Typst package"
-  echo "directory will be used so that the package gets installed for local use."
-  echo "The name and version are read from 'typst.toml' in the project root."
-  echo ""
-  echo "Local package prefix: $DATA_DIR/typst/packages/local"
-  echo "Local preview package prefix: $DATA_DIR/typst/packages/preview"
-  exit 1
-fi
+# Global variables
+TARGET_PATH=""
 
-TARGET="$(resolve_target "${1:?Missing target path, @local or @preview}")"
-echo "Install dir: $TARGET"
+# Show usage information
+show_help() {
+  cat << EOF
+uninstall TARGET
 
-TARGET="${TARGET:?}/${PKG_PREFIX:?}/${VERSION:?}"
-echo "Package to uninstall: $TARGET"
-if [[ ! -e "${TARGET:?}" ]]; then
-  echo "Package was not found."
-elif rm -r "${TARGET:?}" 2>/dev/null; then
-  echo "Successfully removed."
-else
-  echo "Removal failed."
-fi
+Removes the package installed into a directory named '<name>/<version>'
+at TARGET. If TARGET is set to @local or @preview, the local Typst package
+directory will be used so that the package gets uninstalled from local use.
+The name and version are read from 'typst.toml' in the project root.
+
+Options:
+  -h, --help       Show this help message
+
+Local package prefix: $DATA_DIR/typst/packages/local
+Local preview package prefix: $DATA_DIR/typst/packages/preview
+EOF
+}
+
+# Parse command line arguments
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --help|-h|help)
+        show_help
+        exit 0
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        echo "Run 'uninstall help' for usage information" >&2
+        exit 1
+        ;;
+      *)
+        if [ -n "$TARGET_PATH" ]; then
+          echo "Error: Multiple targets specified: '$TARGET_PATH' and '$1'" >&2
+          exit 1
+        fi
+        TARGET_PATH="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$TARGET_PATH" ]; then
+    echo "Error: Missing target path, @local or @preview" >&2
+    echo "Run 'uninstall help' for usage information" >&2
+    exit 1
+  fi
+}
+
+# Normalize target path to absolute path
+normalize_target_path() {
+  local target="$1"
+  
+  # Resolve special targets (@local, @preview)
+  target="$(resolve_target "$target")"
+  
+  # Convert to absolute path if not already
+  case "$target" in
+    /*)
+      # Already absolute
+      echo "$target"
+      ;;
+    *)
+      # Make it absolute relative to current directory
+      if [ -d "$(dirname "$target")" ]; then
+        echo "$(cd "$(dirname "$target")" && pwd -P)/$(basename "$target")"
+      else
+        echo "$(pwd -P)/$target"
+      fi
+      ;;
+  esac
+}
+
+# Uninstall the package
+uninstall_package() {
+  local target="$1"
+  
+  if [ ! -e "$target" ]; then
+    echo "Package was not found at: $target"
+    return 1
+  fi
+  
+  if rm -r "$target" 2>/dev/null; then
+    echo "Successfully removed: $target"
+    return 0
+  else
+    echo "Removal failed: $target" >&2
+    return 1
+  fi
+}
+
+# Main function
+main() {
+  local target_base
+  local target_full
+
+  # Parse command line arguments
+  parse_args "$@"
+
+  # Normalize and resolve target path
+  target_base="$(normalize_target_path "$TARGET_PATH")"
+  echo "Install dir: $target_base"
+
+  # Build full target path with package name and version
+  target_full="${target_base}/${PKG_PREFIX}/${VERSION}"
+  echo "Package to uninstall: $target_full"
+
+  # Uninstall the package
+  uninstall_package "$target_full"
+}
+
+# Run main function
+main "$@"

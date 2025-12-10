@@ -8,142 +8,236 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$SCRIPT_DIR/setup"
 
-SYMLINK=0
-TARGET_ARG=""
+# Global variables
+USE_SYMLINK=0
+TARGET_PATH=""
+IGNORES_FILE=""
 
-# Parse arguments
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --symlink|-s)
-      SYMLINK=1
-      shift
-      ;;
-    --help|-h|help)
-      echo "package [OPTIONS] TARGET"
-      echo ""
-      echo "Packages all relevant files into a directory named '<name>/<version>'"
-      echo "at TARGET. If TARGET is set to @local or @preview, the local Typst package"
-      echo "directory will be used so that the package gets installed for local use."
-      echo "The name and version are read from 'typst.toml' in the project root."
-      echo ""
-      echo "Options:"
-      echo "  -s, --symlink    Create a symlink instead of copying files"
-      echo ""
-      echo "Local package prefix: $DATA_DIR/typst/packages/local"
-      echo "Local preview package prefix: $DATA_DIR/typst/packages/preview"
-      exit 1
-      ;;
-    *)
-      if [ -z "$TARGET_ARG" ]; then
-        TARGET_ARG="$1"
-      else
-        echo "Error: Multiple targets specified" >&2
+# Show usage information
+show_help() {
+  cat << EOF
+package [OPTIONS] TARGET
+
+Packages all relevant files into a directory named '<name>/<version>'
+at TARGET. If TARGET is set to @local or @preview, the local Typst package
+directory will be used so that the package gets installed for local use.
+The name and version are read from 'typst.toml' in the project root.
+
+Options:
+  -s, --symlink    Create a symlink instead of copying files
+  -h, --help       Show this help message
+
+Local package prefix: $DATA_DIR/typst/packages/local
+Local preview package prefix: $DATA_DIR/typst/packages/preview
+EOF
+}
+
+# Parse command line arguments
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --symlink|-s)
+        USE_SYMLINK=1
+        shift
+        ;;
+      --help|-h|help)
+        show_help
+        exit 0
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        echo "Run 'package help' for usage information" >&2
         exit 1
-      fi
-      shift
-      ;;
-  esac
-done
+        ;;
+      *)
+        if [ -n "$TARGET_PATH" ]; then
+          echo "Error: Multiple targets specified: '$TARGET_PATH' and '$1'" >&2
+          exit 1
+        fi
+        TARGET_PATH="$1"
+        shift
+        ;;
+    esac
+  done
 
-if [ -z "$TARGET_ARG" ]; then
-  echo "Error: Missing target path, @local or @preview" >&2
-  echo "Run 'package help' for usage information" >&2
-  exit 1
-fi
-
-TARGET="$(resolve_target "$TARGET_ARG")"
-# Ensure TARGET is an absolute path
-case "$TARGET" in
-  /*)
-    # Already absolute
-    ;;
-  *)
-    # Make it absolute relative to current directory
-    TARGET="$(cd "$(dirname "$TARGET")" 2>/dev/null && pwd -P)/$(basename "$TARGET")" 2>/dev/null || echo "$(pwd -P)/$TARGET"
-    ;;
-esac
-echo "Install dir: $TARGET"
-
-# ignore rules - read into a temporary file and process line by line
-IGNORES_TMP="$(mktemp)"
-grep -v '^#' .typstignore | grep '[^[:blank:]]' > "$IGNORES_TMP" || true
-
-# recursively print all files that are not excluded via .typstignore
-enumerate() {
-  root="$1"
-  if [ -f "$root" ]; then
-    echo "$root"
-  else
-    find "$root" \
-      -mindepth 1 -maxdepth 1 \
-      -not -name .git \
-      -not -name .typstignore | while read -r f; do
-      include=1
-
-      # Check against ignore patterns
-      while IFS= read -r ignore || [ -n "$ignore" ]; do
-        case "$ignore" in
-          !*)
-            # Negation pattern
-            ignore_pattern="${ignore#!}"
-            if [ "$f" = "./$ignore_pattern" ]; then
-              include=1
-            fi
-            ;;
-          *)
-            if [ "$f" = "./$ignore" ]; then
-              include=0
-            fi
-            ;;
-        esac
-      done < "$IGNORES_TMP"
-
-      if [ "$include" = 1 ]; then
-        enumerate "$f"
-      fi
-    done
+  if [ -z "$TARGET_PATH" ]; then
+    echo "Error: Missing target path, @local or @preview" >&2
+    echo "Run 'package help' for usage information" >&2
+    exit 1
   fi
 }
 
-TARGET="${TARGET:?}/${PKG_PREFIX:?}/${VERSION:?}"
-echo "Packaged to: $TARGET"
+# Normalize target path to absolute path
+normalize_target_path() {
+  local target="$1"
+  
+  # Resolve special targets (@local, @preview)
+  target="$(resolve_target "$target")"
+  
+  # Convert to absolute path if not already
+  case "$target" in
+    /*)
+      # Already absolute
+      echo "$target"
+      ;;
+    *)
+      # Make it absolute relative to current directory
+      if [ -d "$(dirname "$target")" ]; then
+        echo "$(cd "$(dirname "$target")" && pwd -P)/$(basename "$target")"
+      else
+        echo "$(pwd -P)/$target"
+      fi
+      ;;
+  esac
+}
 
-if [ "$SYMLINK" -eq 1 ]; then
-  # Symlink mode: create a symlink to the project root
-  if [ -e "$TARGET" ] || [ -L "$TARGET" ]; then
-    rm -r "$TARGET" 2>/dev/null && echo "Overwriting existing version."
+# Load ignore patterns from .typstignore
+load_ignore_patterns() {
+  IGNORES_FILE="$(mktemp)"
+  if [ -f "$ROOT/.typstignore" ]; then
+    grep -v '^#' "$ROOT/.typstignore" | grep '[^[:blank:]]' > "$IGNORES_FILE" || true
   fi
-  mkdir -p "$(dirname "$TARGET")"
-  
-  # Use absolute path for symlink (more reliable across systems)
-  ln -s "$ROOT" "$TARGET"
-  echo "Created symlink: $TARGET -> $ROOT"
-  
-  # Cleanup temporary files
-  rm -f "$IGNORES_TMP"
-else
-  # Copy mode: package files as before
-  # List of all files that get packaged - read into a temporary file
-  FILES_TMP="$(mktemp)"
-  enumerate "." > "$FILES_TMP"
+}
 
-  TMP="$(mktemp -d)"
+# Check if a file should be included based on ignore patterns
+should_include_file() {
+  local file="$1"
+  local include=1
 
-  while IFS= read -r f || [ -n "$f" ]; do
-    if [ -n "$f" ]; then
-      mkdir -p "$TMP/$(dirname "$f")" 2>/dev/null || true
-      cp -r "$ROOT/$f" "$TMP/$f"
+  if [ ! -f "$IGNORES_FILE" ] || [ ! -s "$IGNORES_FILE" ]; then
+    return 0
+  fi
+
+  while IFS= read -r ignore || [ -n "$ignore" ]; do
+    case "$ignore" in
+      !*)
+        # Negation pattern - explicitly include
+        local ignore_pattern="${ignore#!}"
+        if [ "$file" = "./$ignore_pattern" ]; then
+          include=1
+        fi
+        ;;
+      *)
+        # Exclusion pattern
+        if [ "$file" = "./$ignore" ]; then
+          include=0
+        fi
+        ;;
+    esac
+  done < "$IGNORES_FILE"
+
+  [ "$include" -eq 1 ]
+}
+
+# Recursively enumerate all files that should be packaged
+enumerate_files() {
+  local root="$1"
+  
+  if [ -f "$root" ]; then
+    echo "$root"
+    return
+  fi
+
+  find "$root" \
+    -mindepth 1 -maxdepth 1 \
+    -not -name .git \
+    -not -name .typstignore | while read -r file; do
+    if should_include_file "$file"; then
+      enumerate_files "$file"
     fi
-  done < "$FILES_TMP"
+  done
+}
 
-  if rm -r "${TARGET:?}" 2>/dev/null; then
-    echo "Overwriting existing version."
+# Install package as symlink
+install_symlink() {
+  local target="$1"
+  
+  # Remove existing target if it exists
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    rm -r "$target" 2>/dev/null && echo "Overwriting existing version."
   fi
-  mkdir -p "$TARGET"
+  
+  # Create parent directory if needed
+  mkdir -p "$(dirname "$target")"
+  
+  # Create symlink using absolute path
+  ln -s "$ROOT" "$target"
+  echo "Created symlink: $target -> $ROOT"
+}
 
-  # Move all files including hidden ones
-  find "$TMP" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET" \;
+# Install package by copying files
+install_copy() {
+  local target="$1"
+  local files_list
+  local temp_dir
 
-  # Cleanup temporary files
-  rm -f "$IGNORES_TMP" "$FILES_TMP"
-fi
+  # Enumerate all files to package
+  files_list="$(mktemp)"
+  enumerate_files "." > "$files_list"
+
+  # Create temporary directory for staging
+  temp_dir="$(mktemp -d)"
+
+  # Copy all files to temporary directory
+  while IFS= read -r file || [ -n "$file" ]; do
+    if [ -n "$file" ]; then
+      mkdir -p "$temp_dir/$(dirname "$file")" 2>/dev/null || true
+      cp -r "$ROOT/$file" "$temp_dir/$file"
+    fi
+  done < "$files_list"
+
+  # Remove existing target if it exists
+  if [ -e "$target" ]; then
+    rm -r "$target" 2>/dev/null && echo "Overwriting existing version."
+  fi
+  
+  # Create target directory
+  mkdir -p "$target"
+
+  # Move all files from temp directory to target
+  find "$temp_dir" -mindepth 1 -maxdepth 1 -exec mv {} "$target" \;
+
+  # Cleanup
+  rm -f "$files_list"
+  rmdir "$temp_dir" 2>/dev/null || true
+}
+
+# Cleanup temporary files
+cleanup() {
+  if [ -n "$IGNORES_FILE" ] && [ -f "$IGNORES_FILE" ]; then
+    rm -f "$IGNORES_FILE"
+  fi
+}
+
+# Main function
+main() {
+  local target_base
+  local target_full
+
+  # Parse command line arguments
+  parse_args "$@"
+
+  # Normalize and resolve target path
+  target_base="$(normalize_target_path "$TARGET_PATH")"
+  echo "Install dir: $target_base"
+
+  # Build full target path with package name and version
+  target_full="${target_base}/${PKG_PREFIX}/${VERSION}"
+  echo "Packaged to: $target_full"
+
+  # Load ignore patterns (only needed for copy mode, but load early for consistency)
+  load_ignore_patterns
+
+  # Install based on mode
+  if [ "$USE_SYMLINK" -eq 1 ]; then
+    install_symlink "$target_full"
+  else
+    install_copy "$target_full"
+  fi
+
+  # Cleanup
+  cleanup
+}
+
+# Run main function
+main "$@"
