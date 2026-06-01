@@ -16,11 +16,12 @@
   signature: image("signature.png", width: 5em),
 )
 
-#show: faktura(
+#show: faktura.with(
   lang: "de",
   vat: 19,
   seller: seller,
-  subject: "invoice 12/25-001",
+  type: "invoice",
+  subject: "12/25-001",
   due-duration: 14,
   date: datetime(year: 2025, month: 11, day: 15),
   recipient: (
@@ -37,8 +38,10 @@
   ),
   // Items
   items: (
-    (quantity: 1, description: "Gebühr", unit-price: 120.0),
+    (quantity: 1, description: "Gebühr", unit-price: 1200.0),
   ),
-  pre-text: "Bitte fügen Sie hier Ihren individuellen Rechnungstext vor den Positionen ein.",
-  post-text: "Sie können hier weitere Hinweise oder Informationen zur Rechnung ergänzen."
+  pre-text: "This text is shown *before* the items table.",
+  post-text: "This text is shown *after* the items table."
 )
+
+This text is shown as *DOC*.

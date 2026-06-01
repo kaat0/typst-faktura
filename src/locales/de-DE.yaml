@@ -1,0 +1,68 @@
+currency: EUR
+currency_symbol: €
+date_format: "DD.MM.YYYY"
+decimal_separator: ","
+thousands_separator: "."
+
+labels:
+  invoice: "Rechnung"
+  quote: "Angebot"
+  invoice_number: "Rechnungsnummer"
+  quote_number: "Angebotsnummer"
+  date: "Datum"
+  customer_number: "Kundennummer"
+  tax_number: "Steuernummer"
+  vat_id: "USt-IdNr."
+  
+  position: "Pos."
+  description: "Beschreibung"
+  quantity: "Menge"
+  unit: "Einheit"
+  unit_price: "Einzelpreis"
+  total_price: "Gesamtpreis"
+  
+  subtotal: "Zwischensumme"
+  vat: "MwSt."
+  total: "Gesamtbetrag"
+  closing: "Mit freundlichen Grüßen,"
+
+# text_blocks:
+#   greeting:
+#     f: [Sehr geehrte Frau]
+#     m: [Sehr geehrter Herr]
+#     o: [Guten Tag]
+
+#   table:
+#     item-number: [*Pos.*]
+#     description: [*Bezeichnung*]
+#     quantity: [*Menge*]
+#     single-price: [*pro Stk*]
+#     vat-rate: [*USt. Satz*]
+#     vat-price: [*USt.*]
+#     total-price: [*Gesamt*]
+  
+#   common:
+#     total-no-vat: [Netto:]
+#     total-vat: [USt. Gesamt:]
+#     total-with-vat: [Brutto:]
+#     vat-exemption-text: [Gemäß § 19 Abs. 1 UStG (Kleinunternehmerregelung) wird keine Umsatzsteuer berechnet.]
+#     vat-id: [Wirtschafts-ID:]
+#     invoice: [Rechnung]
+#     offer: [Angebot]
+#     date: [Rechnungsdatum]
+#     offer-validity: [Dieses Angebot ist gültig bis]
+#     recipient: [Empfänger:]
+
+#   payment:
+#     request-part1: [Es wird um Leistung der Zahlung von]
+#     request-part2: [bis spätestens]
+#     request-part3: [auf das untenstehende Bankkonto unter Angabe der Rechnungsnummer]
+#     request-part4: [gebeten.]
+#     bank: [Kreditinstitut]
+#     iban: [IBAN:]
+#     bic: [BIC:]
+#     amount: [Betrag:]
+#     reference: [Verwendungszweck:]
+
+
+    
